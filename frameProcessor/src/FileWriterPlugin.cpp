@@ -640,7 +640,13 @@ void FileWriterPlugin::configure(OdinData::IpcMessage& config, OdinData::IpcMess
 
   // Check to see if we are being told how many frames to write
   if (config.has_param(FileWriterPlugin::CONFIG_FRAMES) && config.get_param<size_t>(FileWriterPlugin::CONFIG_FRAMES) > 0) {
-    framesToWrite_ = config.get_param<size_t>(FileWriterPlugin::CONFIG_FRAMES);
+    size_t totalFrames = config.get_param<size_t>(FileWriterPlugin::CONFIG_FRAMES);
+    framesToWrite_ = totalFrames / this->concurrent_processes_;
+    if (totalFrames % this->concurrent_processes_ > this->concurrent_rank_) {
+      framesToWrite_++;
+    }
+    LOG4CXX_DEBUG(logger_, "Expecting " << framesToWrite_ << " frames "
+                           "(total " << totalFrames << ")");
   }
 
   // Check to see if the master dataset is being set
