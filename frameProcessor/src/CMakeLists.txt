@@ -10,7 +10,8 @@ file(GLOB LIB_SOURCES DataBlock.cpp
                       FrameProcessorPlugin.cpp
                       Frame.cpp
                       MetaMessage.cpp
-                      IFrameCallback.cpp )
+                      IFrameCallback.cpp
+                      OffsetMap.cpp)
 
 # Add library for common plugin code
 add_library(${LIB_PROCESSOR} SHARED ${LIB_SOURCES})

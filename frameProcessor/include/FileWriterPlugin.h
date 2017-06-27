@@ -22,6 +22,7 @@ using namespace log4cxx;
 
 #include "FrameProcessorPlugin.h"
 #include "ClassLoader.h"
+#include <OffsetMap.h>
 
 namespace FrameProcessor
 {
@@ -85,8 +86,9 @@ public:
   void writeSubFrames(const Frame& frame);
   void closeFile();
 
+  void setInitialFrame(size_t initial_frame_no);
+  void rewind(size_t active_frame_no, size_t offset);
   size_t calculateFrameOffset(size_t frame_no);
-  void queueFrameOffsetAdjustment(size_t active_frame_no, size_t offset);
 
   void startWriting();
   void stopWriting();
@@ -136,10 +138,12 @@ private:
   static const std::string CONFIG_MASTER_DATASET;
   /** Configuration constant for starting and stopping writing of frames */
   static const std::string CONFIG_WRITE;
-  /** Configuration constant for the frame offset */
-  static const std::string CONFIG_OFFSET_ADJUSTMENT;
-  /** Configuration constant for the frame offset active frame*/
-  static const std::string CONFIG_OFFSET_ADJUSTMENT_ACTIVE_FRAME;
+  /** Configuration constant for the initial frame number */
+  static const std::string CONFIG_INITIAL_FRAME;
+  /** Configuration constant to rewind */
+  static const std::string CONFIG_REWIND;
+  /** Configuration constant for the frame to start rewind from */
+  static const std::string CONFIG_REWIND_ACTIVE_FRAME;
 
   /** Filter definition to write datasets with LZ4 compressed data */
   static const H5Z_filter_t LZ4_FILTER = (H5Z_filter_t)32004;
@@ -155,8 +159,6 @@ private:
   hid_t pixelToHdfType(FileWriterPlugin::PixelType pixel) const;
   HDF5Dataset_t& get_hdf5_dataset(const std::string dset_name);
   void extend_dataset(FileWriterPlugin::HDF5Dataset_t& dset, size_t frame_no) const;
-  size_t adjustFrameOffset(size_t frame_no);
-  void applyFrameOffsetAdjustment();
 
   void processFrame(boost::shared_ptr<Frame> frame);
   size_t getDatasetFrames(const std::string dset_name);
@@ -173,6 +175,8 @@ private:
   size_t framesToWrite_;
   /** Number of frames that have been written to file */
   size_t framesWritten_;
+  /** Frame ID of the most recently written frame */
+  size_t latestFrame_;
   /** Path of the file to write to */
   std::string filePath_;
   /** Name of the file to write to */
@@ -181,10 +185,8 @@ private:
   size_t concurrent_processes_;
   /** Rank of this file writer */
   size_t concurrent_rank_;
-  /** Offset between raw frame ID and position in dataset */
-  size_t frame_offset_adjustment_;
-  /** Offset adjustment queue - pairs of active frame id and offset value */
-  std::queue<std::pair<size_t, size_t> > offset_queue_;
+  /** Offset map to keep track of offset adjustments for frames */
+  OffsetMap offset_map_;
   /** Internal ID of the file being written to */
   hid_t hdf5_fileid_;
   /** Internal HDF5 error flag */

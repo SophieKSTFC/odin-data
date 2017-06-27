@@ -31,8 +31,9 @@ const std::string FileWriterPlugin::CONFIG_DATASET_COMPRESSION            = "com
 
 const std::string FileWriterPlugin::CONFIG_FRAMES                         = "frames";
 const std::string FileWriterPlugin::CONFIG_MASTER_DATASET                 = "master";
-const std::string FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT              = "offset/value";
-const std::string FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT_ACTIVE_FRAME = "offset/active_frame";
+const std::string FileWriterPlugin::CONFIG_INITIAL_FRAME                  = "initial_frame";
+const std::string FileWriterPlugin::CONFIG_REWIND                         = "rewind";
+const std::string FileWriterPlugin::CONFIG_REWIND_ACTIVE_FRAME            = "rewind/active_frame";
 const std::string FileWriterPlugin::CONFIG_WRITE                          = "write";
 
 herr_t hdf5_error_cb(unsigned n, const H5E_error2_t *err_desc, void* client_data)
@@ -56,13 +57,13 @@ FileWriterPlugin::FileWriterPlugin() :
     masterFrame_(""),
     framesToWrite_(0),
     framesWritten_(0),
+    latestFrame_(0),
     filePath_("./"),
     fileName_("test_file.h5"),
     concurrent_processes_(1),
     concurrent_rank_(0),
     hdf5_fileid_(0),
-    hdf5ErrorFlag_(false),
-    frame_offset_adjustment_(0)
+    hdf5ErrorFlag_(false)
 {
   this->logger_ = Logger::getLogger("FW.FileWriterPlugin");
   this->logger_->setLevel(Level::getTrace());
@@ -160,6 +161,11 @@ void FileWriterPlugin::writeFrame(const Frame& frame) {
                            filter_mask, &offset.front(),
                            frame.get_data_size(), frame.get_data());
 
+  if (frame_no > latestFrame_) {
+    LOG4CXX_DEBUG(logger_, "New latest frame: " << frame_no);
+    latestFrame_ = frame_no;
+  }
+
   // Send the meta message containing the frame written and the offset written to
   rapidjson::Document document;
   document.SetObject();
@@ -237,6 +243,11 @@ void FileWriterPlugin::writeSubFrames(const Frame& frame) {
                              frame.get_parameter("subframe_size"),
                              (static_cast<const char*>(frame.get_data())+(i*frame.get_parameter("subframe_size"))));
     assert(status >= 0);
+
+    if (frame_no > latestFrame_) {
+      LOG4CXX_DEBUG(logger_, "New latest frame: " << frame_no);
+      latestFrame_ = frame_no;
+    }
   }
 }
 
@@ -400,18 +411,51 @@ FileWriterPlugin::HDF5Dataset_t& FileWriterPlugin::get_hdf5_dataset(const std::s
 }
 
 /**
+ * Set initial frame number.
+ *
+ * \param initial_frame_no - Frame ID for first frame to be received. This will
+ * be written to offset 0 of the datasets.
+ *
+ */
+void FileWriterPlugin::setInitialFrame(size_t initial_frame_no) {
+  LOG4CXX_DEBUG(logger_, "Initial frame " << initial_frame_no);
+  offset_map_.setInitialOffset(initial_frame_no);
+}
+
+/**
+ * Rewind and overwrite previous frames in datasets.
+ *
+ * \param active_frame_no - Frame to trigger rewind, this frame will be the
+ * first used to overwrite the previous frames
+ * \param frames - Number of frames to rewind by
+ *
+ */
+void FileWriterPlugin::rewind(size_t active_frame_no, size_t frames) {
+  LOG4CXX_DEBUG(logger_, "Active frame: " << active_frame_no);
+  LOG4CXX_DEBUG(logger_, "Latest frame: " << latestFrame_);
+  LOG4CXX_DEBUG(logger_, "Frames: " << frames);
+  if (active_frame_no <= latestFrame_) {
+    LOG4CXX_ERROR(logger_, "Rewind with active frame " << active_frame_no <<
+                           " should have been applied to frames that have"
+                           " already been written.")
+    throw std::runtime_error("Received invalid rewind frame");
+  }
+  offset_map_.addFrameOffsetAdjustment(active_frame_no, frames);
+}
+
+/**
  * Return the dataset offset for the supplied frame number.
  *
  * This method checks that the frame really belongs to this writer instance
- * in the case of multiple writer instances. It then calculates the dataset
- * offset for this frame, which is the offset divided by the number of FileWriterPlugin
- * concurrent processes.
+ * in the case of multiple writer instances. It then applies any user defined
+ * offset and calculates the dataset offset, which is the offset divided by the
+ * number of FileWriterPlugin concurrent processes.
  *
  * \param[in] frame_no - Frame number of the frame.
  * \return - the dataset offset for the frame number.
  */
 size_t FileWriterPlugin::calculateFrameOffset(size_t frame_no) {
-  size_t frame_offset = this->adjustFrameOffset(frame_no);
+  size_t frame_offset = offset_map_.adjustFrameOffset(frame_no);
   if (this->concurrent_processes_ > 1) {
     // Check whether this frame should really be in this process
     if (frame_offset % this->concurrent_processes_ != this->concurrent_rank_) {
@@ -424,44 +468,6 @@ size_t FileWriterPlugin::calculateFrameOffset(size_t frame_no) {
     frame_offset = frame_offset / this->concurrent_processes_;
   }
   return frame_offset;
-}
-
-/** Adjust the incoming frame number with the current offset
- *
- * Throws a std::range_error if a frame is received which has a smaller
- * frame number than the current offset.
- *
- * Returns the dataset offset for frame number (frame_no)
- */
-size_t FileWriterPlugin::adjustFrameOffset(size_t frame_no) {
-  if (frame_no < this->frame_offset_adjustment_) {
-        throw std::range_error("Frame offset adjustment invalid causing negative file offset");
-  }
-
-  if (!this->offset_queue_.empty() && frame_no >= this->offset_queue_.front().first) {
-    // We have reached the frame number for the next offset adjustment to be applied
-    this->applyFrameOffsetAdjustment();
-    LOG4CXX_DEBUG(logger_, "Next frame offset adjustment applied.");
-  }
-
-  // Normal case: apply offset
-  LOG4CXX_DEBUG(logger_, "Raw frame number: " << frame_no);
-  LOG4CXX_DEBUG(logger_, "Frame offset adjustment: " << frame_offset_adjustment_);
-  return frame_no - this->frame_offset_adjustment_;
-}
-
-/** Queue a frame offset adjustment
- */
-void FileWriterPlugin::queueFrameOffsetAdjustment(size_t active_frame_no, size_t offset) {
-  this->offset_queue_.push(std::pair<size_t, size_t>(active_frame_no, offset));
-}
-
-/** Apply the next frame offset adjustment from the queue and remove it
- *
- */
-void FileWriterPlugin::applyFrameOffsetAdjustment() {
-  this->frame_offset_adjustment_ = this->offset_queue_.front().second;
-  this->offset_queue_.pop();
 }
 
 /** Extend the HDF5 dataset ready for new data
@@ -647,25 +653,17 @@ void FileWriterPlugin::configure(OdinData::IpcMessage& config, OdinData::IpcMess
     masterFrame_ = config.get_param<std::string>(FileWriterPlugin::CONFIG_MASTER_DATASET);
   }
 
-  // Check if we are setting a frame offset adjustment
-  if (config.has_param(FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT)) {
-    size_t adjustment = config.get_param<size_t>(FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT);
-    size_t active_frame;
-    if (config.has_param(FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT_ACTIVE_FRAME)) {
-      // This offset will start from a specific frame
-      active_frame = config.get_param<size_t>(FileWriterPlugin::CONFIG_OFFSET_ADJUSTMENT_ACTIVE_FRAME);
-      if (active_frame < adjustment) {
-        LOG4CXX_ERROR(logger_, "Adjustment of " << adjustment <<
-                               " starting from " << active_frame <<
-                               " would cause a negative offset.")
-        throw std::runtime_error("Invalid offset adjustment would cause negative offset");
-      }
-    }
-    else {
-      // This frame is the new start of the dataset - write from the beginning once we get this
-      active_frame = adjustment;
-    }
-    this->queueFrameOffsetAdjustment(active_frame, adjustment);
+  // Check if we are setting a frame offset adjustment; initial frame or rewind
+  if (config.has_param(FileWriterPlugin::CONFIG_INITIAL_FRAME)) {
+    size_t initial_frame =
+        config.get_param<size_t>(FileWriterPlugin::CONFIG_INITIAL_FRAME);
+    setInitialFrame(initial_frame);
+  }
+  else if (config.has_param(FileWriterPlugin::CONFIG_REWIND) &&
+           config.has_param(FileWriterPlugin::CONFIG_REWIND_ACTIVE_FRAME)) {
+    size_t frames = config.get_param<size_t>(FileWriterPlugin::CONFIG_REWIND);
+    size_t active_frame = config.get_param<size_t>(FileWriterPlugin::CONFIG_REWIND_ACTIVE_FRAME);
+    rewind(active_frame, frames);
   }
 
   // Final check is to start or stop writing

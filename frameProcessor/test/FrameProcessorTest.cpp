@@ -332,7 +332,7 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginAdjustHugeOffset )
   BOOST_REQUIRE_NO_THROW(fw.createDataset(dset_def));
 
   hsize_t huge_offset = 100000;
-  BOOST_REQUIRE_NO_THROW(fw.queueFrameOffsetAdjustment(0, huge_offset));
+  BOOST_REQUIRE_NO_THROW(fw.setInitialFrame(huge_offset));
 
   std::vector<boost::shared_ptr<FrameProcessor::Frame> >::iterator it;
   for (it = frames.begin(); it != frames.end(); ++it){
@@ -354,13 +354,13 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginRewind )
   BOOST_REQUIRE_NO_THROW(fw.createFile("/tmp/test_rewind.h5"));
   BOOST_REQUIRE_NO_THROW(fw.createDataset(dset_def));
 
-  BOOST_REQUIRE_NO_THROW(fw.queueFrameOffsetAdjustment(0, 1));  // Frames start at 1
+  BOOST_REQUIRE_NO_THROW(fw.setInitialFrame(1));
   std::vector<boost::shared_ptr<FrameProcessor::Frame> >::iterator it;
-  for (it = frames.begin(); it != frames.end() - 2; ++it) {     // Write first 3
+  for (it = frames.begin(); it != frames.begin() + 3; ++it) {  // Write first 3
     BOOST_REQUIRE_NO_THROW(fw.writeFrame(*(*it)));
   }
-  BOOST_REQUIRE_NO_THROW(fw.queueFrameOffsetAdjustment(4, 3));  // Go back 2
-  for (it = frames.begin() + 3; it != frames.end(); ++it) {     // Write last 2
+  BOOST_REQUIRE_NO_THROW(fw.rewind(4, 2));  // Go back 2
+  for (it = frames.begin() + 3; it != frames.end(); ++it) {  // Write last 2
     BOOST_REQUIRE_NO_THROW(fw.writeFrame(*(*it)));
   }
   BOOST_REQUIRE_NO_THROW(fw.closeFile());
@@ -372,10 +372,10 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginMultiRewind )
   BOOST_REQUIRE_NO_THROW(fw.createFile("/tmp/test_multi_rewind.h5"));
   BOOST_REQUIRE_NO_THROW(fw.createDataset(dset_def));
 
-  BOOST_REQUIRE_NO_THROW(fw.queueFrameOffsetAdjustment(0, 1));  // Frames start at 1
-  // Add offset adjustment to queue for every frame, increasing by one time
-  for (int i = 0; i < 6; i++) {
-    BOOST_REQUIRE_NO_THROW(fw.queueFrameOffsetAdjustment(i, i + 2));
+  BOOST_REQUIRE_NO_THROW(fw.setInitialFrame(1));  // Frames start at 1
+  // Add offset adjustment to queue for every frame, rewinding by one each time
+  for (int i = 2; i < 6; i++) {
+    BOOST_REQUIRE_NO_THROW(fw.rewind(i, 1));
   }
   // We should then write the offset=0 frame five times
   std::vector<boost::shared_ptr<FrameProcessor::Frame> >::iterator it;
@@ -402,7 +402,7 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginSubProcessOffset )
   BOOST_REQUIRE_NO_THROW(fw1.createFile("/tmp/offset_process_1of3.h5"));
   BOOST_REQUIRE_NO_THROW(fw1.createDataset(dset_def));
   BOOST_REQUIRE_EQUAL(dset_def.name, frame->get_dataset_name());
-  BOOST_REQUIRE_NO_THROW(fw1.queueFrameOffsetAdjustment(0, frames[0]->get_frame_number()));
+  BOOST_REQUIRE_NO_THROW(fw1.setInitialFrame(frames[0]->get_frame_number()));
 
   // Write frame no. 2 to "data"
   BOOST_CHECK_EQUAL(frames[1]->get_frame_number(), 2);
@@ -429,7 +429,7 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginSubProcessOffset )
   BOOST_REQUIRE_NO_THROW(fw0.createFile("/tmp/offset_process_0of3.h5"));
   BOOST_REQUIRE_NO_THROW(fw0.createDataset(dset_def));
   BOOST_REQUIRE_EQUAL(dset_def.name, frame->get_dataset_name());
-  BOOST_REQUIRE_NO_THROW(fw0.queueFrameOffsetAdjustment(0, frames[0]->get_frame_number()));
+  BOOST_REQUIRE_NO_THROW(fw0.setInitialFrame(frames[0]->get_frame_number()));
 
   // Write frame no. 1 to "data"
   BOOST_CHECK_EQUAL(frames[0]->get_frame_number(), 1);
@@ -471,7 +471,7 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginSubProcess )
   BOOST_REQUIRE_NO_THROW(fw1.createFile("/tmp/process_1of3.h5"));
   BOOST_REQUIRE_NO_THROW(fw1.createDataset(dset_def));
   BOOST_REQUIRE_EQUAL(dset_def.name, frame->get_dataset_name());
-  BOOST_REQUIRE_NO_THROW(fw1.queueFrameOffsetAdjustment(0, tmp_frames[0]->get_frame_number()));
+  BOOST_REQUIRE_NO_THROW(fw1.setInitialFrame(tmp_frames[0]->get_frame_number()));
 
   // Write frame no. 1 to "data"
   BOOST_CHECK_EQUAL(tmp_frames[1]->get_frame_number(), 1);
@@ -498,7 +498,7 @@ BOOST_AUTO_TEST_CASE( FileWriterPluginSubProcess )
   BOOST_REQUIRE_NO_THROW(fw0.createFile("/tmp/process_0of3.h5"));
   BOOST_REQUIRE_NO_THROW(fw0.createDataset(dset_def));
   BOOST_REQUIRE_EQUAL(dset_def.name, frame->get_dataset_name());
-  BOOST_REQUIRE_NO_THROW(fw0.queueFrameOffsetAdjustment(0, tmp_frames[0]->get_frame_number()));
+  BOOST_REQUIRE_NO_THROW(fw0.setInitialFrame(tmp_frames[0]->get_frame_number()));
 
   // Write frame no. 0 to "data"
   BOOST_CHECK_EQUAL(tmp_frames[0]->get_frame_number(), 0);
